@@ -1,14 +1,12 @@
 "use client"
 
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Palette } from "lucide-react"
+import { ColumnColorRules, resolveCellColor } from "./color-rule-modal"
+import { cn } from "@/lib/utils"
 
 interface ResultsTableProps {
   headers: string[]
@@ -20,6 +18,9 @@ interface ResultsTableProps {
   onSelectAll: () => void
   onClearAll: () => void
   totalCount: number
+  colorRules?: ColumnColorRules
+  /** Called when user clicks a column header to open color picker */
+  onColorHeader?: (col: string) => void
 }
 
 const PAGE_SIZE = 200
@@ -33,6 +34,8 @@ export function ResultsTable({
   onSelectAll,
   onClearAll,
   totalCount,
+  colorRules = {},
+  onColorHeader,
 }: ResultsTableProps) {
   const displayRows = rows.slice(0, PAGE_SIZE)
   const displayKeys = rowKeys.slice(0, PAGE_SIZE)
@@ -65,11 +68,30 @@ export function ResultsTable({
                   aria-label="تحديد الكل"
                 />
               </TableHead>
-              {headers.map((h) => (
-                <TableHead key={h} className="whitespace-nowrap text-right font-semibold">
-                  {h}
-                </TableHead>
-              ))}
+              {headers.map((h) => {
+                const hasRule = !!colorRules[h]
+                return (
+                  <TableHead key={h} className="whitespace-nowrap text-right font-semibold p-0">
+                    <button
+                      className={cn(
+                        "flex items-center gap-1.5 px-4 py-3 w-full text-right transition-colors",
+                        "hover:bg-muted/60 group",
+                        hasRule && "text-primary"
+                      )}
+                      onClick={() => onColorHeader?.(h)}
+                      title={`تلوين عمود "${h}"`}
+                    >
+                      {h}
+                      <Palette
+                        className={cn(
+                          "w-3.5 h-3.5 shrink-0 transition-opacity",
+                          hasRule ? "opacity-100 text-primary" : "opacity-0 group-hover:opacity-50"
+                        )}
+                      />
+                    </button>
+                  </TableHead>
+                )
+              })}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -83,11 +105,24 @@ export function ResultsTable({
               displayRows.map((row, i) => {
                 const key = displayKeys[i]
                 const selected = selectedKeys.has(key)
+
+                // Row-level color: first column with a rule that resolves a color
+                const rowBgColor = headers.reduce<string | undefined>((found, h) => {
+                  if (found) return found
+                  return resolveCellColor(colorRules, h, row[h])
+                }, undefined)
+
                 return (
                   <TableRow
                     key={key}
                     data-selected={selected}
-                    className="cursor-pointer data-[selected=true]:bg-primary/8 data-[selected=true]:hover:bg-primary/12"
+                    className={cn(
+                      "cursor-pointer",
+                      selected
+                        ? "data-[selected=true]:bg-primary/8 data-[selected=true]:hover:bg-primary/12"
+                        : !rowBgColor && "hover:bg-muted/30"
+                    )}
+                    style={rowBgColor && !selected ? { backgroundColor: rowBgColor + "55" } : undefined}
                     onClick={() => onToggleRow(key)}
                   >
                     <TableCell className="w-10 text-center px-3" onClick={(e) => e.stopPropagation()}>
@@ -97,11 +132,21 @@ export function ResultsTable({
                         aria-label="تحديد الصف"
                       />
                     </TableCell>
-                    {headers.map((h) => (
-                      <TableCell key={h} className="whitespace-nowrap text-right">
-                        {String(row[h] ?? "")}
-                      </TableCell>
-                    ))}
+                    {headers.map((h) => {
+                      const cellColor = resolveCellColor(colorRules, h, row[h])
+                      return (
+                        <TableCell
+                          key={h}
+                          className="whitespace-nowrap text-right"
+                          style={cellColor ? {
+                            backgroundColor: cellColor + "66",
+                            borderInlineStart: `3px solid ${cellColor}`,
+                          } : undefined}
+                        >
+                          {String(row[h] ?? "")}
+                        </TableCell>
+                      )
+                    })}
                   </TableRow>
                 )
               })
@@ -112,4 +157,3 @@ export function ResultsTable({
     </div>
   )
 }
-
