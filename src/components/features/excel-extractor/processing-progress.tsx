@@ -51,10 +51,13 @@ export function ProcessingProgress({ step }: ProcessingProgressProps) {
         <span className="tabular-nums text-muted-foreground">{displayPct}%</span>
       </div>
 
-      <Progress value={displayPct} className="h-2 transition-all duration-500" />
+      {/* dir="ltr" so the bar fills from right → left in RTL layout */}
+      <div dir="ltr">
+        <Progress value={displayPct} className="h-2 transition-all duration-500" />
+      </div>
 
       <div className="flex justify-between">
-        {STEPS.map(({ key, label }) => {
+        {[...STEPS].reverse().map(({ key, label }) => {
           const stepIndex = STEPS.findIndex((s) => s.key === key)
           const currentIndex = STEPS.findIndex((s) => s.key === step)
           const passed = stepIndex < currentIndex
