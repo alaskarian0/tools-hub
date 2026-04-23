@@ -19,6 +19,7 @@ import {
   ColorRuleModal, ColorRule, resolveCellColor,
 } from "@/components/features/excel-extractor/color-rule-modal"
 import { useExcelExtractorStore } from "@/store/excel/excelExtractorStore"
+import { useExtractedSelectionStore } from "@/store/excel/extractedSelectionStore"
 import { useActivityStore } from "@/store/activity/activityStore"
 import { useExcelExtractorSync } from "@/hooks/useExcelExtractorSync"
 import { toast } from "sonner"
@@ -48,7 +49,15 @@ export default function ExcelExtractorPage() {
   } = useExcelExtractorStore()
 
   const logActivity = useActivityStore((s) => s.log)
+  const savedSelection = useExtractedSelectionStore((s) => s.savedSelection)
+  const savedSelectionInitialized = useExtractedSelectionStore((s) => s.isInitialized)
+  const loadSavedSelection = useExtractedSelectionStore((s) => s.fetchSavedSelection)
+  const saveSelection = useExtractedSelectionStore((s) => s.saveSelection)
+  const clearSavedSelection = useExtractedSelectionStore((s) => s.clearSavedSelection)
   useExcelExtractorSync()
+  useEffect(() => {
+    loadSavedSelection()
+  }, [loadSavedSelection])
 
   // ── File parsing ─────────────────────────────────────────────────────────────
   function handleFile(file: File) {
@@ -154,6 +163,34 @@ export default function ExcelExtractorPage() {
     [selectedKeys, allRows, visibleHeaders]
   )
 
+  const savedRows = useMemo(() => {
+    if (!savedSelection) return []
+    return savedSelection.rows
+  }, [savedSelection])
+
+  const savedHeaders = useMemo(() => {
+    if (!savedSelection) return []
+    return savedSelection.headers
+  }, [savedSelection])
+
+  async function handleSaveSelection() {
+    if (selectedKeys.size === 0 || selectedRows.length === 0) {
+      toast.error("لا توجد صفوف محددة للحفظ")
+      return
+    }
+    try {
+      await saveSelection({
+        fileName: fileName || "extract",
+        headers: visibleHeaders,
+        rows: selectedRows,
+        savedAt: new Date().toISOString(),
+      })
+      toast.success(`تم حفظ ${selectedRows.length} صف في قاعدة البيانات`)
+    } catch {
+      toast.error("تعذر حفظ الصفوف في قاعدة البيانات")
+    }
+  }
+
   // ── Color rules ──────────────────────────────────────────────────────────────
   function handleColorSave(rule: ColorRule | null) {
     if (!colorModalCol) return
@@ -170,6 +207,7 @@ export default function ExcelExtractorPage() {
 
   const isProcessing = step !== "idle" && step !== "done"
   const isFilterActive = filterValue.trim().length > 0
+  const hasActiveFileView = !!fileName && visibleHeaders.length > 0
 
   return (
     <div className="space-y-5 w-full">
@@ -232,66 +270,83 @@ export default function ExcelExtractorPage() {
       {!isProcessing && !fileName && <FileUploadZone onFile={handleFile} />}
 
       {/* ── Main content (tabs) ── */}
-      {!isProcessing && fileName && visibleHeaders.length > 0 && (
+      {!isProcessing && savedSelectionInitialized && (hasActiveFileView || savedRows.length > 0) && (
         <div className="space-y-4">
 
           {/* Filter panel */}
-          <FilterPanel
-            headers={headers}
-            filterColumn={filterColumn}
-            filterValue={filterValue}
-            selectedColumns={selectedColumns}
-            onColumnChange={setFilterColumn}
-            onValueChange={setFilterValue}
-            onToggleColumn={toggleColumn}
-            onClearFilter={() => setFilterValue("")}
-          />
+          {hasActiveFileView && (
+            <FilterPanel
+              headers={headers}
+              filterColumn={filterColumn}
+              filterValue={filterValue}
+              selectedColumns={selectedColumns}
+              onColumnChange={setFilterColumn}
+              onValueChange={setFilterValue}
+              onToggleColumn={toggleColumn}
+              onClearFilter={() => setFilterValue("")}
+            />
+          )}
 
           {/* Tabs */}
-          <Tabs defaultValue="browse">
+          <Tabs defaultValue={hasActiveFileView ? "browse" : "saved"}>
             <TabsList className="w-full">
-              <TabsTrigger value="browse" className="flex-1 gap-2">
-                جميع الصفوف
-                <Badge variant="secondary" className="text-xs">{filteredIndices.length}</Badge>
-                {isFilterActive && (
-                  <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" title="مفلتر" />
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="selected" className="flex-1 gap-2">
-                الصفوف المحددة
-                {selectedKeys.size > 0 && (
-                  <Badge className="text-xs bg-primary/15 text-primary border-primary/30">
-                    {selectedKeys.size}
+              {hasActiveFileView && (
+                <TabsTrigger value="browse" className="flex-1 gap-2">
+                  جميع الصفوف
+                  <Badge variant="secondary" className="text-xs">{filteredIndices.length}</Badge>
+                  {isFilterActive && (
+                    <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" title="مفلتر" />
+                  )}
+                </TabsTrigger>
+              )}
+              {hasActiveFileView && (
+                <TabsTrigger value="selected" className="flex-1 gap-2">
+                  الصفوف المحددة
+                  {selectedKeys.size > 0 && (
+                    <Badge className="text-xs bg-primary/15 text-primary border-primary/30">
+                      {selectedKeys.size}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+              )}
+              <TabsTrigger value="saved" className="flex-1 gap-2">
+                المحفوظ محليًا
+                {savedRows.length > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    {savedRows.length}
                   </Badge>
                 )}
               </TabsTrigger>
             </TabsList>
 
             {/* ── Tab 1: Browse & select ── */}
-            <TabsContent value="browse" className="mt-3">
-              <div className="border rounded-xl overflow-hidden">
-                <ResultsTable
-                  headers={visibleHeaders}
-                  rows={visibleRows}
-                  rowKeys={filteredIndices}
-                  selectedKeys={selectedKeys}
-                  onToggleRow={toggleRow}
-                  onSelectAll={selectAllVisible}
-                  onClearAll={clearAllVisible}
-                  totalCount={filteredIndices.length}
-                  colorRules={colorRules}
-                  onColorHeader={(col) => { setColorModalCol(col); setColorModalKey((k) => k + 1) }}
-                />
-              </div>
-              {Object.keys(colorRules).length > 0 && (
-                <p className="text-xs text-muted-foreground mt-2 text-center">
-                  انقر على رأس العمود الملوّن لتعديل قاعدة التلوين
-                </p>
-              )}
-            </TabsContent>
+            {hasActiveFileView && (
+              <TabsContent value="browse" className="mt-3">
+                <div className="border rounded-xl overflow-hidden">
+                  <ResultsTable
+                    headers={visibleHeaders}
+                    rows={visibleRows}
+                    rowKeys={filteredIndices}
+                    selectedKeys={selectedKeys}
+                    onToggleRow={toggleRow}
+                    onSelectAll={selectAllVisible}
+                    onClearAll={clearAllVisible}
+                    totalCount={filteredIndices.length}
+                    colorRules={colorRules}
+                    onColorHeader={(col) => { setColorModalCol(col); setColorModalKey((k) => k + 1) }}
+                  />
+                </div>
+                {Object.keys(colorRules).length > 0 && (
+                  <p className="text-xs text-muted-foreground mt-2 text-center">
+                    انقر على رأس العمود الملوّن لتعديل قاعدة التلوين
+                  </p>
+                )}
+              </TabsContent>
+            )}
 
             {/* ── Tab 2: Selected rows + export ── */}
-            <TabsContent value="selected" className="mt-3">
+            {hasActiveFileView && (
+              <TabsContent value="selected" className="mt-3">
               <div className="border rounded-xl overflow-hidden">
                 <div className="flex items-center justify-between px-4 py-3 border-b bg-primary/5">
                   <span className="font-semibold text-sm text-primary">الصفوف المحددة</span>
@@ -319,6 +374,14 @@ export default function ExcelExtractorPage() {
                   </div>
                 ) : (
                   <div className="flex flex-col">
+                    <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
+                      <p className="text-xs text-muted-foreground">
+                        احفظ التحديد الحالي ليبقى بعد إعادة تحميل الصفحة
+                      </p>
+                      <Button size="sm" onClick={handleSaveSelection}>
+                        حفظ التحديد
+                      </Button>
+                    </div>
                     <div className="overflow-auto max-h-[460px] border-b">
                       <Table>
                         <TableHeader>
@@ -380,6 +443,79 @@ export default function ExcelExtractorPage() {
                         selectedRows={[]}
                         fileName={fileName}
                       />
+                    </div>
+                  </div>
+                )}
+              </div>
+              </TabsContent>
+            )}
+
+            <TabsContent value="saved" className="mt-3">
+              <div className="border rounded-xl overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/20">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm">الصفوف المحفوظة</span>
+                    {savedSelection && (
+                      <Badge variant="secondary" className="text-xs">
+                        {savedSelection.fileName}
+                      </Badge>
+                    )}
+                  </div>
+                  {savedRows.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive"
+                        onClick={async () => {
+                          try {
+                            await clearSavedSelection()
+                            toast.success("تم مسح الصفوف المحفوظة من قاعدة البيانات")
+                          } catch {
+                            toast.error("تعذر مسح الصفوف المحفوظة")
+                          }
+                        }}
+                    >
+                      مسح الحفظ
+                    </Button>
+                  )}
+                </div>
+
+                {savedRows.length === 0 || savedHeaders.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 px-6 text-center text-muted-foreground">
+                    <FileSpreadsheet className="w-10 h-10 mb-3 opacity-20" />
+                    <p className="text-sm">لا توجد صفوف محفوظة حتى الآن</p>
+                  </div>
+                ) : (
+                  <div className="p-3">
+                    <ExportBar
+                      headers={savedHeaders}
+                      allRows={savedRows}
+                      selectedRows={[]}
+                      fileName={`${savedSelection?.fileName ?? "saved"}_saved`}
+                    />
+                    <div className="overflow-auto max-h-[460px] border rounded-lg mt-3">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-muted/30 hover:bg-muted/30">
+                            {savedHeaders.map((h) => (
+                              <TableHead key={h} className="whitespace-nowrap text-right text-xs font-semibold py-2">
+                                {h}
+                              </TableHead>
+                            ))}
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {savedRows.map((row, i) => (
+                            <TableRow key={i} className="text-xs">
+                              {savedHeaders.map((h) => (
+                                <TableCell key={`${h}-${i}`} className="whitespace-nowrap text-right py-2">
+                                  {String(row[h] ?? "")}
+                                </TableCell>
+                              ))}
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
                     </div>
                   </div>
                 )}

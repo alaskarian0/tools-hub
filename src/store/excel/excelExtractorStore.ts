@@ -4,6 +4,8 @@ import { create } from "zustand"
 import type { ColorRule, ColumnColorRules } from "@/components/features/excel-extractor/color-rule-modal"
 import apiClient from "@/lib/axiosClients"
 
+const isRemoteSyncEnabled = process.env.NEXT_PUBLIC_ENABLE_REMOTE_EXCEL_SYNC === "true"
+
 // ── Recent file entry ──────────────────────────────────────────────────────────
 export interface RecentFileEntry {
   id?: number           // DB id (present after sync, absent before first save)
@@ -58,6 +60,7 @@ const defaultState: ExcelExtractorState = {
 // Debounce helper
 let settingsSyncTimer: ReturnType<typeof setTimeout> | null = null
 function debouncedSyncSettings(settings: Record<string, unknown>) {
+  if (!isRemoteSyncEnabled) return
   if (settingsSyncTimer) clearTimeout(settingsSyncTimer)
   settingsSyncTimer = setTimeout(() => {
     apiClient.put("/settings/excel-extractor", { settings }).catch(() => {/* silent */})
@@ -75,6 +78,11 @@ export const useExcelExtractorStore = create<ExcelExtractorStore>()((set, get) =
     if (typeof window !== "undefined") {
       localStorage.removeItem("excel-extractor-store")
     }
+    if (!isRemoteSyncEnabled) {
+      set({ isInitialized: true })
+      return
+    }
+
     try {
       const [settingsRes, recentRes] = await Promise.all([
         apiClient.get("/settings/excel-extractor"),
@@ -155,6 +163,7 @@ export const useExcelExtractorStore = create<ExcelExtractorStore>()((set, get) =
       const filtered = s.recentFiles.filter((f) => f.fileName !== entry.fileName)
       return { recentFiles: [entry, ...filtered].slice(0, 5) }
     })
+    if (!isRemoteSyncEnabled) return
     // Sync to API
     apiClient.post("/recent-files/excel-extractor", {
       fileName: entry.fileName,
@@ -188,12 +197,14 @@ export const useExcelExtractorStore = create<ExcelExtractorStore>()((set, get) =
 
   clearRecentFiles: () => {
     set({ recentFiles: [] })
+    if (!isRemoteSyncEnabled) return
     apiClient.delete("/recent-files/excel-extractor").catch(() => {/* silent */})
   },
 
   removeRecentFile: (fileId) => {
     if (typeof fileId === "number") {
       set((s) => ({ recentFiles: s.recentFiles.filter((f) => f.id !== fileId) }))
+      if (!isRemoteSyncEnabled) return
       apiClient.delete(`/recent-files/excel-extractor/${fileId}`).catch(() => {/* silent */})
     } else {
       // fallback: remove by fileName (before DB id is known)
@@ -204,6 +215,7 @@ export const useExcelExtractorStore = create<ExcelExtractorStore>()((set, get) =
   // ── Reset ────────────────────────────────────────────────────────────────────
   resetSettings: () => {
     set({ filterColumn: "", filterValue: "", selectedColumns: [], colorRules: {}, settingsRestoredFrom: null })
+    if (!isRemoteSyncEnabled) return
     apiClient.delete("/settings/excel-extractor").catch(() => {/* silent */})
   },
 

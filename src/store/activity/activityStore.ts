@@ -3,6 +3,8 @@
 import { create } from "zustand"
 import apiClient from "@/lib/axiosClients"
 
+const isRemoteActivitySyncEnabled = process.env.NEXT_PUBLIC_ENABLE_REMOTE_ACTIVITY_SYNC === "true"
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export type ToolId = "excel-extractor" | "duplicate-detector" | "excel-merger" | "excel-compare"
@@ -49,6 +51,10 @@ export const useActivityStore = create<ActivityStore>()((set, get) => ({
     if (typeof window !== "undefined") {
       localStorage.removeItem("tools-hub-activity")
     }
+    if (!isRemoteActivitySyncEnabled) {
+      set({ isInitialized: true })
+      return
+    }
     try {
       const res = await apiClient.get<{ data: { items: Record<string, unknown>[] } }>("/activity?limit=20")
       const items = (res.data as { data?: { items?: Record<string, unknown>[] } })?.data?.items ?? []
@@ -75,6 +81,7 @@ export const useActivityStore = create<ActivityStore>()((set, get) => ({
     }
     set((s) => ({ entries: [tempEntry, ...s.entries].slice(0, 20) }))
 
+    if (!isRemoteActivitySyncEnabled) return
     // Sync to API
     apiClient.post("/activity", {
       tool: TOOL_ID_MAP[entry.tool],
@@ -96,12 +103,14 @@ export const useActivityStore = create<ActivityStore>()((set, get) => ({
   // ── Clear all ────────────────────────────────────────────────────────────────
   clear: () => {
     set({ entries: [] })
+    if (!isRemoteActivitySyncEnabled) return
     apiClient.delete("/activity").catch(() => {/* silent */})
   },
 
   // ── Remove single entry ──────────────────────────────────────────────────────
   remove: (id) => {
     set((s) => ({ entries: s.entries.filter((e) => e.id !== id) }))
+    if (!isRemoteActivitySyncEnabled) return
     if (id !== 0) {
       apiClient.delete(`/activity/${id}`).catch(() => {/* silent */})
     }
