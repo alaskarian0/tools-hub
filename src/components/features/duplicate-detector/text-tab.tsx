@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { DuplicatesResult } from "./duplicates-result"
 import { findDuplicates } from "@/lib/detectDuplicates"
 import { toast } from "sonner"
+import { useActivityStore } from "@/store/activity/activityStore"
 
 type Separator = "newline" | "comma"
 
@@ -15,6 +16,7 @@ export function TextTab() {
   const [separator, setSeparator] = useState<Separator>("newline")
   const [results, setResults] = useState<ReturnType<typeof findDuplicates> | null>(null)
   const [totalRows, setTotalRows] = useState(0)
+  const logActivity = useActivityStore((s) => s.log)
 
   function scan() {
     if (!text.trim()) {
@@ -29,8 +31,14 @@ export function TextTab() {
       toast.error("أدخل قيمتين على الأقل")
       return
     }
+    const dupes = findDuplicates(values)
     setTotalRows(values.length)
-    setResults(findDuplicates(values))
+    setResults(dupes)
+    logActivity({
+      tool: "duplicate-detector",
+      label: `فحص نص — ${values.length} قيمة`,
+      detail: `${dupes.length} قيمة مكررة`,
+    })
   }
 
   function reset() {

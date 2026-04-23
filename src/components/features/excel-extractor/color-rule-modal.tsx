@@ -233,7 +233,7 @@ export function ColorRuleModal({
               </div>
             </div>
 
-            <div className="space-y-1.5 max-h-[360px] overflow-y-auto">
+            <div className="space-y-1.5 max-h-[300px] overflow-y-auto">
               {uniqueValues.map((val) => {
                 const color = valueMap[val] ?? "#e5e7eb"
                 const isNone = color === NO_COLOR
@@ -270,6 +270,35 @@ export function ColorRuleModal({
                   </div>
                 )
               })}
+            </div>
+
+            {/* ── Color preview strip ── */}
+            <div className="space-y-1.5 pt-1 border-t">
+              <p className="text-xs text-muted-foreground">معاينة التوزيع اللوني</p>
+              <div className="flex flex-wrap gap-1.5">
+                {uniqueValues.map((val) => {
+                  const color = valueMap[val] ?? "#e5e7eb"
+                  const isNone = color === NO_COLOR
+                  const displayName = val.length > 12 ? val.slice(0, 12) + "…" : val
+                  return (
+                    <span
+                      key={val}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border"
+                      style={isNone
+                        ? { background: "#f3f4f6", borderColor: "#d1d5db", color: "#9ca3af" }
+                        : { background: color + "33", borderColor: color + "88", color: color }
+                      }
+                      title={val}
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0 border"
+                        style={{ background: isNone ? "#d1d5db" : color, borderColor: isNone ? "#9ca3af" : color }}
+                      />
+                      {displayName}
+                    </span>
+                  )
+                })}
+              </div>
             </div>
           </div>
         )}

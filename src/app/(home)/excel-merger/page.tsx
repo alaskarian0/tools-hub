@@ -12,6 +12,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import { toast } from "sonner"
+import { useActivityStore } from "@/store/activity/activityStore"
 
 interface LoadedFile {
   name: string
@@ -24,6 +25,7 @@ export default function ExcelMergerPage() {
   const [addSource, setAddSource] = useState(true)
   const [selectedColumns, setSelectedColumns] = useState<string[]>([])
   const [merged, setMerged] = useState<Record<string, unknown>[] | null>(null)
+  const logActivity = useActivityStore((s) => s.log)
 
   // Union of all headers across all files
   const allHeaders = useMemo(() => {
@@ -102,6 +104,11 @@ export default function ExcelMergerPage() {
       })
     })
     setMerged(result)
+    logActivity({
+      tool: "excel-merger",
+      label: `دمج ${files.length} ملفات — ${result.length} صف`,
+      detail: files.map((f) => f.name.replace(/\.[^.]+$/, "")).join("، "),
+    })
     toast.success(`تم الدمج: ${result.length} صف إجمالاً`)
   }
 

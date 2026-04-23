@@ -16,6 +16,7 @@ import { DuplicatesResult } from "./duplicates-result"
 import { findDuplicates } from "@/lib/detectDuplicates"
 import { toast } from "sonner"
 import { X } from "lucide-react"
+import { useActivityStore } from "@/store/activity/activityStore"
 
 export function ExcelTab() {
   const [fileName, setFileName] = useState("")
@@ -24,6 +25,7 @@ export function ExcelTab() {
   const [column, setColumn] = useState("")
   const [results, setResults] = useState<ReturnType<typeof findDuplicates> | null>(null)
   const [totalRows, setTotalRows] = useState(0)
+  const logActivity = useActivityStore((s) => s.log)
 
   function handleFile(file: File) {
     const reader = new FileReader()
@@ -56,8 +58,14 @@ export function ExcelTab() {
       return
     }
     const values = rows.map((r) => String(r[column] ?? ""))
+    const dupes = findDuplicates(values)
     setTotalRows(values.length)
-    setResults(findDuplicates(values))
+    setResults(dupes)
+    logActivity({
+      tool: "duplicate-detector",
+      label: `فحص "${fileName}" — عمود: ${column}`,
+      detail: `${dupes.length} قيمة مكررة من أصل ${values.length} صف`,
+    })
   }
 
   function reset() {

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/table"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
+import { useActivityStore } from "@/store/activity/activityStore"
 
 type RowStatus = "added" | "deleted" | "modified" | "unchanged"
 
@@ -73,6 +74,7 @@ export default function ExcelComparePage() {
   const [keyCol, setKeyCol] = useState("")
   const [diff, setDiff] = useState<DiffRow[] | null>(null)
   const [showUnchanged, setShowUnchanged] = useState(false)
+  const logActivity = useActivityStore((s) => s.log)
 
   async function handleDrop(slot: "A" | "B", file: File) {
     try {
@@ -138,6 +140,11 @@ export default function ExcelComparePage() {
     const added   = result.filter((r) => r.status === "added").length
     const deleted = result.filter((r) => r.status === "deleted").length
     const modified = result.filter((r) => r.status === "modified").length
+    logActivity({
+      tool: "excel-compare",
+      label: `مقارنة "${fileA.name.replace(/\.[^.]+$/, "")}" و "${fileB.name.replace(/\.[^.]+$/, "")}"`,
+      detail: `${added} مضاف · ${deleted} محذوف · ${modified} معدّل`,
+    })
     toast.success(`المقارنة اكتملت: ${added} مضاف · ${deleted} محذوف · ${modified} معدّل`)
   }
 

@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, useMemo, useCallback } from "react"
+import { useState, useMemo, useCallback, useEffect } from "react"
 import * as XLSX from "xlsx"
-import { FileSpreadsheet, X, Trash2 } from "lucide-react"
+import { CheckCircle2, FileSpreadsheet, X, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -14,26 +14,43 @@ import { FilterPanel } from "@/components/features/excel-extractor/filter-panel"
 import { ResultsTable } from "@/components/features/excel-extractor/results-table"
 import { ExportBar } from "@/components/features/excel-extractor/export-bar"
 import { ProcessingProgress, ProcessingStep } from "@/components/features/excel-extractor/processing-progress"
+import { RecentFilesSection } from "@/components/features/excel-extractor/recent-files-section"
 import {
-  ColorRuleModal, ColumnColorRules, ColorRule, resolveCellColor,
+  ColorRuleModal, ColorRule, resolveCellColor,
 } from "@/components/features/excel-extractor/color-rule-modal"
+import { useExcelExtractorStore } from "@/store/excel/excelExtractorStore"
+import { useActivityStore } from "@/store/activity/activityStore"
+import { useExcelExtractorSync } from "@/hooks/useExcelExtractorSync"
 import { toast } from "sonner"
 
 export default function ExcelExtractorPage() {
-  const [step, setStep]                   = useState<ProcessingStep>("idle")
-  const [fileName, setFileName]           = useState("")
-  const [headers, setHeaders]             = useState<string[]>([])
-  const [allRows, setAllRows]             = useState<Record<string, unknown>[]>([])
-  const [filterColumn, setFilterColumn]   = useState("")
-  const [filterValue, setFilterValue]     = useState("")
-  const [selectedColumns, setSelectedColumns] = useState<string[]>([])
-  const [selectedKeys, setSelectedKeys]   = useState<Set<number>>(new Set())
-
-  // Color rules
-  const [colorRules, setColorRules]       = useState<ColumnColorRules>({})
+  // ── Ephemeral local state ────────────────────────────────────────────────────
+  const [step, setStep]           = useState<ProcessingStep>("idle")
+  const [fileName, setFileName]   = useState("")
+  const [headers, setHeaders]     = useState<string[]>([])
+  const [allRows, setAllRows]     = useState<Record<string, unknown>[]>([])
+  const [selectedKeys, setSelectedKeys] = useState<Set<number>>(new Set())
   const [colorModalCol, setColorModalCol] = useState<string | null>(null)
+  const [colorModalKey, setColorModalKey] = useState(0)
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
 
-  // ── file parsing ─────────────────────────────────────────────────────────────
+  // ── Persisted store state ────────────────────────────────────────────────────
+  const {
+    filterColumn, setFilterColumn,
+    filterValue, setFilterValue,
+    selectedColumns, setSelectedColumns, toggleColumn,
+    colorRules, updateColorRule,
+    addRecentFile,
+    recentFiles,
+    settingsRestoredFrom, clearRestoredHint,
+    resetSettings,
+  } = useExcelExtractorStore()
+
+  const logActivity = useActivityStore((s) => s.log)
+  useExcelExtractorSync()
+
+  // ── File parsing ─────────────────────────────────────────────────────────────
   function handleFile(file: File) {
     setStep("reading")
     const reader = new FileReader()
@@ -49,11 +66,38 @@ export default function ExcelExtractorPage() {
           setStep("rendering")
           setTimeout(() => {
             const hdrs = Object.keys(rows[0])
-            setHeaders(hdrs); setAllRows(rows); setSelectedColumns(hdrs)
-            setFilterColumn(""); setFilterValue(""); setSelectedKeys(new Set())
-            setColorRules({})
-            setFileName(file.name.replace(/\.[^.]+$/, ""))
+            setHeaders(hdrs)
+            setAllRows(rows)
+            setSelectedKeys(new Set())
+
+            // Apply pre-loaded selectedColumns if they match new headers; else init to all
+            const { selectedColumns: storedCols, colorRules: storedRules } =
+              useExcelExtractorStore.getState()
+            const matching = storedCols.filter((c) => hdrs.includes(c))
+            setSelectedColumns(matching.length > 0 ? matching : hdrs)
+
+            setFilterColumn("")
+            setFilterValue("")
+
+            const baseName = file.name.replace(/\.[^.]+$/, "")
+            setFileName(baseName)
+            clearRestoredHint()
+
+            addRecentFile({
+              fileName: baseName,
+              uploadedAt: new Date().toISOString(),
+              rowCount: rows.length,
+              headers: hdrs,
+              colorRules: storedRules,
+              selectedColumns: matching.length > 0 ? matching : hdrs,
+            })
+
             setStep("done")
+            logActivity({
+              tool: "excel-extractor",
+              label: `تحميل ${rows.length} صف من "${baseName}"`,
+              detail: `${hdrs.length} عمود`,
+            })
             toast.success(`تم تحميل ${rows.length} صف`)
             setTimeout(() => setStep("idle"), 1800)
           }, 300)
@@ -64,14 +108,7 @@ export default function ExcelExtractorPage() {
     reader.readAsArrayBuffer(file)
   }
 
-  // ── column toggle ─────────────────────────────────────────────────────────────
-  function toggleColumn(col: string) {
-    setSelectedColumns((prev) =>
-      prev.includes(col) ? prev.filter((c) => c !== col) : [...prev, col]
-    )
-  }
-
-  // ── filter ───────────────────────────────────────────────────────────────────
+  // ── Filter ───────────────────────────────────────────────────────────────────
   const filteredIndices = useMemo(() => {
     if (!filterValue.trim()) return allRows.map((_, i) => i)
     const val = filterValue.trim().toLowerCase()
@@ -90,7 +127,7 @@ export default function ExcelExtractorPage() {
     return out
   }), [filteredRows, visibleHeaders])
 
-  // ── selection ────────────────────────────────────────────────────────────────
+  // ── Selection ────────────────────────────────────────────────────────────────
   const toggleRow = useCallback((key: number) => {
     setSelectedKeys((prev) => {
       const next = new Set(prev)
@@ -117,30 +154,28 @@ export default function ExcelExtractorPage() {
     [selectedKeys, allRows, visibleHeaders]
   )
 
-  // ── color rules ──────────────────────────────────────────────────────────────
+  // ── Color rules ──────────────────────────────────────────────────────────────
   function handleColorSave(rule: ColorRule | null) {
     if (!colorModalCol) return
-    setColorRules((prev) => {
-      const next = { ...prev }
-      if (rule === null) { delete next[colorModalCol] } else { next[colorModalCol] = rule }
-      return next
-    })
+    updateColorRule(colorModalCol, rule)
     setColorModalCol(null)
   }
 
+  // ── Reset ────────────────────────────────────────────────────────────────────
   function reset() {
     setFileName(""); setHeaders([]); setAllRows([])
-    setFilterColumn(""); setFilterValue(""); setSelectedColumns([])
-    setSelectedKeys(new Set()); setStep("idle"); setColorRules({})
+    setSelectedKeys(new Set()); setStep("idle")
+    resetSettings()
   }
 
   const isProcessing = step !== "idle" && step !== "done"
+  const isFilterActive = filterValue.trim().length > 0
 
   return (
     <div className="space-y-5 w-full">
 
       {/* ── Page header ── */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 flex items-center justify-center shrink-0">
           <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
         </div>
@@ -148,8 +183,18 @@ export default function ExcelExtractorPage() {
           <h1 className="text-xl font-bold">استخراج بيانات Excel</h1>
           <p className="text-sm text-muted-foreground">صفّ البيانات، لوّن الأعمدة، حدّد الصفوف، وصدّر ما تحتاجه</p>
         </div>
+
+        {/* Auto-save indicator */}
         {fileName && !isProcessing && (
-          <Button variant="ghost" size="sm" className="mr-auto gap-1.5 text-muted-foreground" onClick={reset}>
+          <span className="text-[11px] text-muted-foreground/60 flex items-center gap-1.5 mr-auto">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            حفظ تلقائي للإعدادات
+          </span>
+        )}
+
+        {/* File reset button */}
+        {fileName && !isProcessing && (
+          <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" onClick={reset}>
             <X className="w-4 h-4" />
             {fileName}
           </Button>
@@ -159,14 +204,38 @@ export default function ExcelExtractorPage() {
       {/* ── Progress ── */}
       {step !== "idle" && <ProcessingProgress step={step} />}
 
-      {/* ── Upload ── */}
+      {/* ── Recent files (shown only when no file loaded, after client hydration) ── */}
+      {mounted && !isProcessing && !fileName && recentFiles.length > 0 && (
+        <RecentFilesSection
+          onRestored={() => toast.success("تم استعادة إعدادات الملف السابق")}
+        />
+      )}
+
+      {/* ── Pre-load banner (shown after restore, before re-upload) ── */}
+      {!isProcessing && !fileName && settingsRestoredFrom && (
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/20 dark:border-emerald-800 text-sm text-emerald-700 dark:text-emerald-400">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span>
+            تم تحميل إعدادات <strong>{settingsRestoredFrom}</strong> — أعد رفع الملف لتطبيقها
+          </span>
+          <button
+            onClick={clearRestoredHint}
+            className="mr-auto text-emerald-500 hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors"
+            aria-label="إغلاق"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* ── Upload zone ── */}
       {!isProcessing && !fileName && <FileUploadZone onFile={handleFile} />}
 
-      {/* ── Tabs layout ── */}
+      {/* ── Main content (tabs) ── */}
       {!isProcessing && fileName && visibleHeaders.length > 0 && (
         <div className="space-y-4">
 
-          {/* Filter panel — full width */}
+          {/* Filter panel */}
           <FilterPanel
             headers={headers}
             filterColumn={filterColumn}
@@ -184,11 +253,16 @@ export default function ExcelExtractorPage() {
               <TabsTrigger value="browse" className="flex-1 gap-2">
                 جميع الصفوف
                 <Badge variant="secondary" className="text-xs">{filteredIndices.length}</Badge>
+                {isFilterActive && (
+                  <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" title="مفلتر" />
+                )}
               </TabsTrigger>
               <TabsTrigger value="selected" className="flex-1 gap-2">
                 الصفوف المحددة
                 {selectedKeys.size > 0 && (
-                  <Badge className="text-xs bg-primary/15 text-primary border-primary/30">{selectedKeys.size}</Badge>
+                  <Badge className="text-xs bg-primary/15 text-primary border-primary/30">
+                    {selectedKeys.size}
+                  </Badge>
                 )}
               </TabsTrigger>
             </TabsList>
@@ -206,7 +280,7 @@ export default function ExcelExtractorPage() {
                   onClearAll={clearAllVisible}
                   totalCount={filteredIndices.length}
                   colorRules={colorRules}
-                  onColorHeader={(col) => setColorModalCol(col)}
+                  onColorHeader={(col) => { setColorModalCol(col); setColorModalKey((k) => k + 1) }}
                 />
               </div>
               {Object.keys(colorRules).length > 0 && (
@@ -315,9 +389,10 @@ export default function ExcelExtractorPage() {
         </div>
       )}
 
-      {/* ── Color Rule Modal ── */}
+      {/* ── Color Rule Modal — key forces full remount every open so useState initializers always re-run with latest existingRule ── */}
       {colorModalCol && (
         <ColorRuleModal
+          key={`${colorModalCol}-${colorModalKey}`}
           column={colorModalCol}
           allRows={allRows}
           existingRule={colorRules[colorModalCol]}
